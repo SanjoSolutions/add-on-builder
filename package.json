@@ -1,4 +1,5 @@
 {
+  "name": "@sanjo/add-on-builder",
   "type": "module",
   "version": "1.0.0",
   "dependencies": {
