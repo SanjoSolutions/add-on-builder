@@ -1,19 +1,32 @@
 import { exec } from '@sanjo/exec'
 import { readFile } from '@sanjo/read-file'
-import { retrieveDependencies, retrieveVersion } from '@sanjo/toc'
+import { retrieveDependencies, retrieveVersion, retrieveAddOnTOCFilePath, prependFilesToLoad, extractListedFiles, retrieveAddOnName, resolveDependencies } from '@sanjo/toc'
 import * as child_process from 'node:child_process'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import * as process from 'node:process'
 import { fileExists } from './unnamed/file/fileExists.js'
 
+const LIBS_FOLDER = 'libs'
+
 export async function build() {
-  const addOnName = path.basename(process.cwd())
+  const addOnPath = process.cwd()
+  const addOnName = retrieveAddOnName(addOnPath)
   const buildDirectory = '../../build/' + addOnName + '/'
   await fs.rm(buildDirectory, { recursive: true, force: true })
   await fs.mkdir(buildDirectory, { recursive: true })
 
   const addOnTocFilePath = `./${ addOnName }.toc`
+
+  await copyAddOn('.', buildDirectory)
+
+  await fs.mkdir(path.join(buildDirectory, LIBS_FOLDER), { recursive: true })
+
+  const dependencies = await resolveDependencies(addOnPath)
+
+  for (const [gameVersion, dependencies] of dependencies) {
+
+  }
 
   const dependenciesToCopy = await retrieveDependencies(addOnTocFilePath)
   const dependenciesToCopySet = new Set(dependenciesToCopy)
@@ -23,7 +36,7 @@ export async function build() {
 
     let dependencies2
     try {
-      await copyAddOn(dependencyPath, path.join(buildDirectory, dependency))
+      await copyAddOn(dependencyPath, path.join(buildDirectory, LIBS_FOLDER, dependency))
       dependencies2 = await retrieveDependencies(`${ dependencyPath }/${ dependency }.toc`)
 
       for (const dependency2 of dependencies2) {
@@ -41,7 +54,19 @@ export async function build() {
     }
   }
 
-  await copyAddOn('.', `${ buildDirectory }/${ addOnName }`)
+  function determineLoadOrder() {
+
+  }
+
+  const loadOrder = determineLoadOrder()
+
+  let filesToLoad = []
+
+  for (const addOnPath of loadOrder) {
+    filesToLoad = filesToLoad.concat(await extractListedFiles(retrieveAddOnTOCFilePath(addOnPath)))
+  }
+
+  prependFilesToLoad(addOnTocFilePath, filesToLoad)
 
   async function generateOutputFileName() {
     const version = await retrieveVersion(addOnTocFilePath)
