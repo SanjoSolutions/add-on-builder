@@ -20,13 +20,23 @@ export async function build() {
   for (let index = 0; index < dependenciesToCopy.length; index++) {
     const dependency = dependenciesToCopy[index]
     const dependencyPath = `../${ dependency }`
-    await copyAddOn(dependencyPath, path.join(buildDirectory, dependency))
 
-    const dependencies2 = await retrieveDependencies(`${ dependencyPath }/${ dependency }.toc`)
-    for (const dependency2 of dependencies2) {
-      if (!dependenciesToCopySet.has(dependency2)) {
-        dependenciesToCopySet.add(dependency2)
-        dependenciesToCopy.push(dependency2)
+    let dependencies2
+    try {
+      await copyAddOn(dependencyPath, path.join(buildDirectory, dependency))
+      dependencies2 = await retrieveDependencies(`${ dependencyPath }/${ dependency }.toc`)
+
+      for (const dependency2 of dependencies2) {
+        if (!dependenciesToCopySet.has(dependency2)) {
+          dependenciesToCopySet.add(dependency2)
+          dependenciesToCopy.push(dependency2)
+        }
+      }
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        console.warn(`Dependency "${ dependency }" has not been found and therefore not been included in the bundle.`)
+      } else {
+        throw error
       }
     }
   }
