@@ -1,13 +1,16 @@
 import { exec } from '@sanjo/exec'
 import { readFile } from '@sanjo/read-file'
-import { retrieveDependencies, retrieveVersion, retrieveAddOnTOCFilePath, prependFilesToLoad, extractListedFiles, retrieveAddOnName, resolveDependencies } from '@sanjo/toc'
+import { retrieveDependencies, retrieveVersion, retrieveAddOnName, prependFilesToLoad } from '@sanjo/toc'
 import * as child_process from 'node:child_process'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import * as process from 'node:process'
 import { fileExists } from './unnamed/file/fileExists.js'
-
-const LIBS_FOLDER = 'libs'
+import * as yaml from 'js-yaml'
+import { simpleGit } from 'simple-git'
+import * as os from 'node:os'
+import { writeFile } from '@sanjo/write-file'
+import { last } from '@sanjo/array'
 
 export async function build() {
   const addOnPath = process.cwd()
@@ -18,16 +21,6 @@ export async function build() {
 
   const addOnTocFilePath = `./${ addOnName }.toc`
 
-  await copyAddOn('.', buildDirectory)
-
-  await fs.mkdir(path.join(buildDirectory, LIBS_FOLDER), { recursive: true })
-
-  const dependencies = await resolveDependencies(addOnPath)
-
-  for (const [gameVersion, dependencies] of dependencies) {
-
-  }
-
   const dependenciesToCopy = await retrieveDependencies(addOnTocFilePath)
   const dependenciesToCopySet = new Set(dependenciesToCopy)
   for (let index = 0; index < dependenciesToCopy.length; index++) {
@@ -36,7 +29,7 @@ export async function build() {
 
     let dependencies2
     try {
-      await copyAddOn(dependencyPath, path.join(buildDirectory, LIBS_FOLDER, dependency))
+      await copyAddOn(dependencyPath, path.join(buildDirectory, dependency))
       dependencies2 = await retrieveDependencies(`${ dependencyPath }/${ dependency }.toc`)
 
       for (const dependency2 of dependencies2) {
@@ -54,19 +47,7 @@ export async function build() {
     }
   }
 
-  function determineLoadOrder() {
-
-  }
-
-  const loadOrder = determineLoadOrder()
-
-  let filesToLoad = []
-
-  for (const addOnPath of loadOrder) {
-    filesToLoad = filesToLoad.concat(await extractListedFiles(retrieveAddOnTOCFilePath(addOnPath)))
-  }
-
-  prependFilesToLoad(addOnTocFilePath, filesToLoad)
+  await copyAddOn('.', `${ buildDirectory }/${ addOnName }`)
 
   async function generateOutputFileName() {
     const version = await retrieveVersion(addOnTocFilePath)
@@ -193,4 +174,77 @@ function convertSSHToHTTPS(url) {
   } else {
     return url
   }
+}
+
+export function buildWithPackageMetaFile() {
+
+}
+
+export async function updateDependencyIncludes(addOnPath) {
+  let allDependencies = []
+
+  let dependencies = await readDependenciesFromDotDependenciesFile(addOnPath)
+  allDependencies = allDependencies.concat(dependencies)
+
+  const librariesPath = path.join(addOnPath, 'libs')
+
+  const git = simpleGit()
+  while (dependencies.length >= 1) {
+    const dependency = dependencies.shift()
+    const directoryPath = await fs.mkdtemp(path.join(os.tmpdir(), 'add-on-builder-'))
+    git.clone(dependency.url, directoryPath).checkout(dependency.tag)
+    const dependencyDependencies = (await determineDependencies(directoryPath)).map(dependency => ({
+      ...dependency,
+      path: path.join(librariesPath, last(dependency.path.split('/')))
+    }))
+    dependencies = dependencies.concat(dependencyDependencies)
+    allDependencies = allDependencies.concat(dependencyDependencies)
+  }
+
+  await updatePackageMetaFile(addOnPath, librariesPath, allDependencies)
+  await updateTOCFiles(addOnPath, librariesPath, allDependencies)
+}
+
+async function readDependenciesFromDotDependenciesFile(addOnPath) {
+  return yaml.load(await readFile(path.join(addOnPath, '.dependencies')))
+}
+
+async function determineDependencies(addOnPath) {
+  return await determineDependenciesDeclaredInDotDependenciesFile(addOnPath)
+}
+
+async function determineDependenciesDeclaredInDotDependenciesFile(addOnPath) {
+  return await readDependenciesFromDotDependenciesFile(addOnPath)
+}
+
+async function updatePackageMetaFile(addOnPath, librariesPath, dependencies) {
+  // TODO: Also support the other name for package meta files (see CurseForge documentation
+  const packageMetaDocument = yaml.load(await readFile(path.join(addOnPath, '.pkgmeta')))
+  for (const dependency of dependencies) {
+    packageMetaDocument.externals[dependency.path] = {
+      url: dependency.url,
+      tag: dependency.tag
+    }
+  }
+  await writeFile(path.join(addOnPath, '.pkgmeta'), yaml.dump(packageMetaDocument))
+}
+
+async function updateTOCFiles(addOnPath, librariesPath, dependencies) {
+  const addOnName = retrieveAddOnName(addOnPath)
+  updateTOCFile(addOnPath, librariesPath, dependencies, path.join(addOnPath, addOnName + '.toc'))
+  updateTOCFile(addOnPath, librariesPath, dependencies, path.join(addOnPath, addOnName + '_Wrath.toc'))
+  updateTOCFile(addOnPath, librariesPath, dependencies, path.join(addOnPath, addOnName + '_Vanilla.toc'))
+}
+
+async function updateTOCFile(addOnPath, librariesPath, dependencies, tocFilePath) {
+  await addLibraryIncludes(addOnPath, dependencies, tocFilePath)
+}
+
+async function addLibraryIncludes(addOnPath, dependencies, tocFilePath) {
+  const includes = dependencies.map(dependency => path.relative(addOnPath, dependency.path))
+  await addIncludesBeforeOtherIncludes(tocFilePath, includes)
+}
+
+async function addIncludesBeforeOtherIncludes(tocFilePath, includes) {
+  await prependFilesToLoad(tocFilePath, includes)
 }
